@@ -1,0 +1,8 @@
+apiVersion: v1
+description: CGW Connectivity Gateway connects sites using IPSEC, VXLAN,
+  BGP or GRE.
+name: cgw
+home: https://github.com/openvnf/cgw
+sources:
+  - https://github.com/openvnf/cgw
+version: master

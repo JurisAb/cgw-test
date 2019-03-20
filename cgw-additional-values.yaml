@@ -1,0 +1,179 @@
+# Default values for CGW.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+#affinity:
+# nodeAffinity:
+#   requiredDuringSchedulingIgnoredDuringExecution:
+#     nodeSelectorTerms:
+#     - matchExpressions:
+#       - key: failure-domain.beta.kubernetes.io/zone
+#         operator: In
+#         values:
+#         - eu-central-1a
+
+# IPSec not being used
+
+ipsec:
+  enabled: FALSE
+
+## Values used to set up GRE usage
+gre:
+  enabled: FALSE
+
+bird:
+  enabled: true
+  configuration:
+    bird: |
+      router id 10.255.3.254;
+      listen bgp address 0.0.0.0;
+
+      protocol device {
+        scan time 10;
+      }
+
+      protocol kernel {
+        scan time 10;
+        import none;
+        export where source != RTS_STATIC;
+      }
+
+          # Import Policy
+
+      filter em_import {
+        if net = 185.118.108.16/28 && bgp_path ~ [= 65070 65070=] then {
+            accept;
+          }
+        else reject;
+        }
+        
+      filter dpio_import_a {
+        if net = 0.0.0.0/0 then {
+          bgp_med = 980;
+            accept;
+          }
+        else reject;
+        }
+
+      filter dpio_import_b {
+        if net = 0.0.0.0/0 then {
+          bgp_med = 990;
+            accept;
+          }
+        else reject;
+        }
+
+      protocol bgp dp_bgp_b {
+        local as 65071;
+        neighbor 10.255.0.13 as 65111;
+        import filter dpio_import_b;
+        export all;
+        hold time 90;
+      }
+
+      protocol bgp dp_bgp_a {
+        local as 65071;
+        neighbor 10.255.0.14 as 65111;
+        import filter dpio_import_a;
+        export all;
+        hold time 90;
+      }
+        
+      protocol bgp EM_BGP {
+        local as 65071;
+        neighbor 10.255.3.1 as 65070;
+        import filter em_import;
+        export all;
+        hold time 90;
+      }
+
+initScript:
+  enabled: true
+  env: {}
+  script: |    
+    ip route add 100.64/10 dev eth0 # pod prefix
+    
+    ip addr add 10.255.0.1/28 dev inettrans0
+    ip addr add 10.71.3.10/24 dev emgtp0
+    ip r add 10.70.3.0/24 via 10.71.3.1
+    ip route default add via 10.255.0.14
+
+    ip tunnel add name gre1 mode gre local 10.71.3.10 remote 10.70.3.14 ttl 64 dev emgtp0
+    ip addr add 10.255.3.254/24 dev gre1
+    ip link set gre1 up
+
+iptables:
+  enabled: true
+  ipv4Rules: |
+    *filter
+
+    ## Block incoming for metrics and VXLAN
+    -I INPUT ! -i eth0 -p tcp --dport 9324 -j DROP
+    -I INPUT ! -i eth0 -p tcp --dport 9427 -j DROP
+    -I INPUT ! -i eth0 -p udp --dport 8472 -j DROP
+    
+    COMMIT
+
+pingProber:
+  enabled: false
+
+pingExporter:
+  enabled: false
+  # targets:
+  #  - sourceV4: 10.255.0.1
+  #   sourceV6: "::"
+  #   pingInterval: 5s
+  #   pingTimeout: 4s
+  #   pingTargets:
+  #     - 10.255.0.13
+  #     - 10.255.0.14
+  # - sourceV4: 10.71.3.10
+  #   sourceV6: "::"
+  #   pingInterval: 5s
+  #   pingTimeout: 4s
+  #   pingTargets:
+  #     - 10.70.3.14
+  # - sourceV4: 10.255.3.254
+  #   sourceV6: "::"
+  #   pingInterval: 5s
+  #   pingTimeout: 4s
+  #   pingTargets:
+  #     - 10.255.3.1
+vxlanController:
+  enabled: true
+              #For prod
+              #  #annotationKey: vxlan.travelping.com/names
+              #    #metadataKey: vxlan
+              #      #For test
+  annotationKey: vxlan.travelping.com/networks
+  metadataKey: vxlan.travelping.com
+              #            #names: "grx0, tdggtp0"
+              #              #for testing
+  names: "emgtp0, inettrans0"
+pcap:
+  enabled: true
+  env:
+    FILTER: "host 185.118.108.17"
+    IFACE: "gre1"
+    MAXFILESIZE: "50"
+    MAXFILENUM: "70"
+    
+    
+rclone:
+  enabled: true
+  image:
+    repository: travelping/docker-rclone
+    tag: v1.0
+    pullPolicy: IfNotPresent
+  env:
+    RCLONE_CONFIG_S3_TYPE: "s3"
+    RCLONE_CONFIG_S3_ENV_AUTH: "false"
+    RCLONE_CONFIG_S3_ACCESS_KEY_ID: ""
+    RCLONE_CONFIG_S3_SECRET_ACCESS_KEY: ""
+    RCLONE_CONFIG_S3_REGION: "eu_central-1"
+    RCLONE_CONFIG_S3_ACL: "private"
+    RCLONE_CONFIG_S3_FORCE_PATH_STYLE: "false"
+  command: 
+    script: |      
+      set -e     
+      rclone touch s3:cgwt/cgw/example.txt --s3-env-auth=false --s3-access-key-id= --s3-secret-access-key= --s3-region=eu-central-1 --s3-acl=private --s3-force-path-style=false
+    
